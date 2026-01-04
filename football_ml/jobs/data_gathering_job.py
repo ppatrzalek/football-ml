@@ -18,6 +18,7 @@ from football_ml.preprocessors.match import (
     preprocess_stadium_data,
     preprocess_players_data,
     preprocess_match_players_data,
+    preprocess_player_position_data,
 )
 
 def main():
@@ -31,7 +32,7 @@ def main():
     match_ids = [match['name'] for match in matches_df.to_dict('records') if match['type'] == 'dir']
     logger.info(f"Available matches: {len(match_ids)}")
     
-    fct_track_players, fct_track_ball, dim_competition_season, dim_match, dim_team, dim_stadium, dim_players, fct_match_players = [], [], [], [], [], [], [], []
+    fct_track_players, fct_track_ball, dim_competition_season, dim_match, dim_team, dim_stadium, dim_players, fct_match_players, dim_players_position = [], [], [], [], [], [], [], [], []
 
     for match_id in match_ids:
         logger.info(f"Match ID: {match_id}")
@@ -67,6 +68,9 @@ def main():
             dim_players.append(
                 preprocess_players_data(raw_match_df)
             )
+            dim_players_position.append(
+                preprocess_player_position_data(raw_match_df)
+            )
             fct_match_players.append(
                 preprocess_match_players_data(raw_match_df)
             )
@@ -77,12 +81,13 @@ def main():
     
     fct_track_players_df = pd.concat(fct_track_players, ignore_index=True)
     fct_track_ball_df = pd.concat(fct_track_ball, ignore_index=True)
-    dim_competition_season_df = pd.concat(dim_competition_season, ignore_index=True)
+    dim_competition_season_df = pd.concat(dim_competition_season, ignore_index=True).drop_duplicates().reset_index(drop=True)
     dim_match_df = pd.concat(dim_match, ignore_index=True)
-    dim_team_df = pd.concat(dim_team, ignore_index=True)
-    dim_stadium_df = pd.concat(dim_stadium, ignore_index=True)
-    dim_players_df = pd.concat(dim_players, ignore_index=True)
-    fct_match_players_df = pd.concat(fct_match_players_df, ignore_index=True)
+    dim_team_df = pd.concat(dim_team, ignore_index=True).drop_duplicates().reset_index(drop=True)
+    dim_stadium_df = pd.concat(dim_stadium, ignore_index=True).drop_duplicates().reset_index(drop=True)
+    dim_players_df = pd.concat(dim_players, ignore_index=True).drop_duplicates().reset_index(drop=True)
+    dim_players_position_df = pd.concat(dim_players_position, ignore_index=True).drop_duplicates().reset_index(drop=True)
+    fct_match_players_df = pd.concat(fct_match_players, ignore_index=True)
     logger.info("All matches processed successfully.")
     
     # Write into parquet file
@@ -118,6 +123,10 @@ def main():
     output_file = RAW_DATA_DIR / "dim_players.parquet"
     dim_players_df.to_parquet(output_file, index=False)
     logger.info(f"Processed players dimension data saved to {output_file}")
+    
+    output_file = RAW_DATA_DIR / "dim_players_position.parquet"
+    dim_players_position_df.to_parquet(output_file, index=False)
+    logger.info(f"Processed players position data saved to {output_file}")
     
     logger.info("Data gathering job completed successfully.")
     

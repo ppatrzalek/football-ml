@@ -99,6 +99,17 @@ def preprocess_player_tracking(raw_tracking_data, match_id):
         ["frame", "timestamp", "period"],
     ).reset_index().rename(columns={"x": "player_x", "y": "player_y", "index": "player_tracking_id"})
     players_tracking_df["match_id"] = match_id
+    columns_ = [
+        "player_tracking_id",
+        "timestamp",
+        "player_x",
+        "player_y",
+        "period",
+        "frame",
+        "player_id",
+        "match_id"
+    ]
+    players_tracking_df = players_tracking_df[columns_]
     
     return players_tracking_df
 

@@ -223,9 +223,6 @@ def preprocess_players_data(raw_match_df: pd.DataFrame) -> pd.DataFrame:
         columns={
             "id": "player_id",
             "player_role.id": "player_role_id",
-            "player_role.name": "player_role_name",
-            "player_role.acronym": "player_role_acronym",
-            "player_role.position_group": "player_position_group",
             "first_name": "player_first_name",
             "last_name": "player_last_name",
             "short_name": "player_short_name",
@@ -235,6 +232,28 @@ def preprocess_players_data(raw_match_df: pd.DataFrame) -> pd.DataFrame:
     )
     
     return dim_players_df
+
+
+def preprocess_player_position_data(raw_match_df: pd.DataFrame) -> pd.DataFrame:
+    dim_player_position_columns = [
+        "player_role.id",
+        "player_role.name",
+        "player_role.acronym",
+        "player_role.position_group",
+    ]
+    dim_player_position_df = pd.json_normalize(
+        raw_match_df.to_dict("records"),
+        record_path="players",
+    )[dim_player_position_columns]
+    dim_player_position_df = dim_player_position_df.rename(
+        columns={
+            "player_role.id": "player_role_id",
+            "player_role.name": "player_role_name",
+            "player_role.acronym": "player_role_acronym",
+            "player_role.position_group": "player_position_group",
+        }
+    )
+    return dim_player_position_df
 
 
 def preprocess_match_players_data(raw_match_df: pd.DataFrame) -> pd.DataFrame:
@@ -251,7 +270,6 @@ def preprocess_match_players_data(raw_match_df: pd.DataFrame) -> pd.DataFrame:
         "team_id",
         "start_time",
         "end_time",
-        "total_time",
         "number",
         "yellow_card",
         "red_card",
@@ -265,6 +283,7 @@ def preprocess_match_players_data(raw_match_df: pd.DataFrame) -> pd.DataFrame:
         "playing_time.total.minutes_played",
         "playing_time.total.minutes_played_regular_time",
         "playing_time.total",
+        "player_role.id",
     ]
     
     fct_match_players_df = pd.json_normalize(
@@ -276,6 +295,7 @@ def preprocess_match_players_data(raw_match_df: pd.DataFrame) -> pd.DataFrame:
     fct_match_players_df = fct_match_players_df.rename(
         columns={
             "id": "player_id",
+            "player_role.id": "player_role_id",
             "playing_time.total.minutes_tip": "minutes_tip",
             "playing_time.total.minutes_otip": "minutes_otip",
             "playing_time.total.minutes_played": "minutes_played",
@@ -290,7 +310,7 @@ def preprocess_match_players_data(raw_match_df: pd.DataFrame) -> pd.DataFrame:
 
 
 # Deprecated function
-def preprocess_players_data(raw_match_df: pd.DataFrame) -> pd.DataFrame:
+def DEPPRECATED_preprocess_players_data(raw_match_df: pd.DataFrame) -> pd.DataFrame:
     """Preprocess match data by converting time strings to seconds.
 
     Args:
