@@ -1,5 +1,10 @@
-# Catalog of files to ignore for Python projects
-/data
+# Data catalog — keep directory structure but ignore data files
+data/**/*.parquet
+data/**/*.csv
+data/**/*.json
+
+# Notebooks
+notebooks/football_animation_frames/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
