@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "football-ml"
+version = "0.1.0"
+description = "Football analytics: tracking data processing, visualization, and ML"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=2.2",
+    "pandas>=2.3",
+    "scipy>=1.15",
+    "scikit-learn>=1.7",
+    "statsmodels>=0.14",
+    "matplotlib>=3.10",
+    "seaborn>=0.13",
+    "plotly>=6.5",
+    "mplsoccer>=1.6",
+    "plotnine>=0.15",
+    "mizani>=0.14",
+    "narwhals>=2.12",
+    "xarray>=2025.6",
+    "requests>=2.32",
+    "duckdb>=1.0",
+    "kloppy>=3.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["football_ml"]
