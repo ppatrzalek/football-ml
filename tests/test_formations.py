@@ -64,3 +64,33 @@ def test_classify_allows_four_line_formation():
     # 4 def ~0, 2 dm ~15, 3 am ~30, 1 fwd ~45 -> 4-2-3-1
     depths = [0.0, 0.4, -0.3, 0.2, 15.0, 15.4, 30.0, 30.3, 29.7, 45.0]
     assert classify_formation(depths, tolerance_m=6.0) == "4-2-3-1"
+
+
+from football_ml.formations import ball_frame, interval_key
+
+
+def test_ball_frame_period1_anchor():
+    assert ball_frame(0.0, 1.0, 10, 27800) == 10
+    assert ball_frame(0.1, 1.0, 10, 27800) == 11
+
+
+def test_ball_frame_period2_anchor():
+    # period 2 clock starts at 45:00 -> maps to p2_start
+    assert ball_frame(45 * 60, 2.0, 10, 27800) == 27800
+    assert ball_frame(45 * 60 + 0.1, 2.0, 10, 27800) == 27801
+
+
+def test_interval_key_first_half_buckets():
+    assert interval_key(10, 1.0, 10, 27800, 5) == 0          # kickoff
+    assert interval_key(10 + 600 * 5, 1.0, 10, 27800, 5) == 5  # 5:00
+    assert interval_key(10 + 600 * 6, 1.0, 10, 27800, 5) == 5  # 6:00
+
+
+def test_interval_key_first_half_stoppage_caps_at_40():
+    # 46:00 in first half must not collide with second-half 45
+    assert interval_key(10 + 600 * 46, 1.0, 10, 27800, 5) == 40
+
+
+def test_interval_key_second_half_starts_at_45():
+    assert interval_key(27800, 2.0, 10, 27800, 5) == 45
+    assert interval_key(27800 + 600 * 6, 2.0, 10, 27800, 5) == 50

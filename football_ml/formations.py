@@ -96,3 +96,43 @@ def classify_formation(depths: Sequence[float], tolerance_m: float) -> str:
     d = np.sort(np.asarray(depths, dtype=float))
     lines = _constrain_lines(_greedy_lines(d, tolerance_m))
     return "-".join(str(len(line)) for line in lines)
+
+
+def ball_frame(
+    seconds_since_midnight: float, period: float, p1_start: int, p2_start: int
+) -> int:
+    """Derive the player-tracking frame for a ball-tracking timestamp.
+
+    Parameters
+    ----------
+    seconds_since_midnight : float
+        Ball timestamp's elapsed seconds since 00:00:00 of its date.
+    period : float
+        Match period (1.0 or 2.0).
+    p1_start, p2_start : int
+        Player-tracking start frame of each period.
+
+    Returns
+    -------
+    int
+        The corresponding player-tracking frame.
+    """
+    half = seconds_since_midnight if period == 1 else seconds_since_midnight - 45 * 60
+    start = p1_start if period == 1 else p2_start
+    return start + int(round(half * 10))
+
+
+def interval_key(
+    frame: int, period: float, p1_start: int, p2_start: int, interval_min: int
+) -> int:
+    """Bucket a frame into its interval-start-minute key.
+
+    First-half stoppage (>= 45 min) folds into the last regular first-half bucket
+    to avoid colliding with the second half, which starts at 45.
+    """
+    if period == 1:
+        minute = (frame - p1_start) / 600.0
+        raw = int(minute // interval_min) * interval_min
+        return min(raw, 45 - interval_min)
+    minute = (frame - p2_start) / 600.0
+    return 45 + int(minute // interval_min) * interval_min
