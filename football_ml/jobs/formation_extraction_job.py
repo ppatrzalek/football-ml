@@ -21,10 +21,11 @@ def run(
     dict
         The formations result (also written to disk).
     """
+    match_id = str(match_id)
     tracking = pd.read_parquet(RAW_DATA_DIR / "fct_players_tracking.parquet")
-    tracking = tracking[tracking["match_id"] == match_id]
+    tracking = tracking[tracking["match_id"].astype(str) == match_id]
     ball = pd.read_parquet(RAW_DATA_DIR / "fct_ball_tracking.parquet")
-    ball = ball[ball["match_id"] == match_id]
+    ball = ball[ball["match_id"].astype(str) == match_id]
     roster = pd.read_parquet(RAW_DATA_DIR / "fct_match_players.parquet")
     roster = roster[roster["match_id"].astype(str) == match_id]
     positions = pd.read_parquet(RAW_DATA_DIR / "dim_players_position.parquet")

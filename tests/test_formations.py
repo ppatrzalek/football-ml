@@ -198,25 +198,12 @@ def test_write_formations_json_roundtrip(tmp_path):
 
 
 def test_end_to_end_smoke_real_match():
-    # Integration: runs the real pipeline on match 1886347.
-    import pandas as pd
-    from football_ml.config import RAW_DATA_DIR
-    from football_ml.formations import extract_match_formations
+    # Integration: runs the real pipeline on match 1886347 via the job entry point.
+    from football_ml.jobs.formation_extraction_job import run
 
-    mid = "1886347"
-    tracking = pd.read_parquet(RAW_DATA_DIR / "fct_players_tracking.parquet")
-    tracking = tracking[tracking["match_id"] == mid]
-    ball = pd.read_parquet(RAW_DATA_DIR / "fct_ball_tracking.parquet")
-    ball = ball[ball["match_id"] == mid]
-    roster = pd.read_parquet(RAW_DATA_DIR / "fct_match_players.parquet")
-    roster = roster[roster["match_id"] == mid]
-    positions = pd.read_parquet(RAW_DATA_DIR / "dim_players_position.parquet")
-    dim_match = pd.read_parquet(RAW_DATA_DIR / "dim_match.parquet")
-    match_row = dim_match[dim_match["match_id"] == mid].iloc[0]
+    result = run(match_id="1886347")
 
-    result = extract_match_formations(tracking, ball, roster, positions, match_row)
-
-    assert result["match_id"] == mid
+    assert result["match_id"] == "1886347"
     assert result["intervals"], "expected at least one interval"
     for cell in result["intervals"].values():
         for team in ("home", "away"):
