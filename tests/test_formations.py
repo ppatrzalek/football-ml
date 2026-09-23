@@ -94,3 +94,19 @@ def test_interval_key_first_half_stoppage_caps_at_40():
 def test_interval_key_second_half_starts_at_45():
     assert interval_key(27800, 2.0, 10, 27800, 5) == 45
     assert interval_key(27800 + 600 * 6, 2.0, 10, 27800, 5) == 50
+
+
+from football_ml.formations import mode_label
+
+
+def test_mode_label_returns_most_common():
+    labels = ["4-4-2", "4-4-2", "4-5-1", "4-4-2"]
+    assert mode_label(labels, min_frames=1) == "4-4-2"
+
+
+def test_mode_label_none_when_too_few():
+    assert mode_label(["4-4-2"], min_frames=50) is None
+
+
+def test_mode_label_none_when_empty():
+    assert mode_label([], min_frames=1) is None

@@ -136,3 +136,23 @@ def interval_key(
         return min(raw, 45 - interval_min)
     minute = (frame - p2_start) / 600.0
     return 45 + int(minute // interval_min) * interval_min
+
+
+def mode_label(labels: Sequence[str], min_frames: int) -> str | None:
+    """Most common label, or None if fewer than ``min_frames`` valid labels.
+
+    Parameters
+    ----------
+    labels : Sequence[str]
+        Per-frame formation labels for one interval/team/possession phase.
+    min_frames : int
+        Minimum valid labels required to emit a formation.
+
+    Returns
+    -------
+    str | None
+    """
+    valid = [label for label in labels if label is not None]
+    if len(valid) < min_frames:
+        return None
+    return Counter(valid).most_common(1)[0][0]
