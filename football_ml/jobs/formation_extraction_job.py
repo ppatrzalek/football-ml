@@ -12,7 +12,7 @@ def run(
     *,
     tolerance_m: float = 6.0,
     interval_min: int = 5,
-    min_frames: int = 300,
+    min_frames: int = 200,
     z_max: float = 2.0,
     settle_seconds: float = 5.0,
 ) -> dict:
