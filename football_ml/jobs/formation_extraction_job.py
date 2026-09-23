@@ -12,7 +12,9 @@ def run(
     *,
     tolerance_m: float = 6.0,
     interval_min: int = 5,
-    min_frames: int = 50,
+    min_frames: int = 300,
+    z_max: float = 2.0,
+    settle_seconds: float = 5.0,
 ) -> dict:
     """Load a match, extract formations, and write the JSON output.
 
@@ -25,7 +27,11 @@ def run(
     interval_min : int
         Length in minutes of each aggregation interval.
     min_frames : int
-        Minimum valid frames required to emit a formation for an interval.
+        Minimum settled frames required to emit a formation for an interval.
+    z_max : float
+        Maximum ball height (m) for a frame to count as settled open play.
+    settle_seconds : float
+        Seconds to drop after each return to play (resettle buffer).
 
     Returns
     -------
@@ -46,6 +52,7 @@ def run(
     result = extract_match_formations(
         tracking, ball, roster, positions, match_row,
         tolerance_m=tolerance_m, interval_min=interval_min, min_frames=min_frames,
+        z_max=z_max, settle_seconds=settle_seconds,
     )
     out_path = PROCESSED_DATA_DIR / "formations" / f"match_{match_id}.json"
     write_formations_json(result, out_path)

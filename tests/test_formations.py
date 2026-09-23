@@ -138,13 +138,18 @@ def test_extract_match_formations_structure_and_labels():
     frames = [10, 11, 12]
     tracking = _make_tracking(frames, home_players)
 
-    # ball: home in possession for all three frames (period 1, ~1s in)
+    # ball: home in possession for all three frames (period 1, ~1s in),
+    # in-bounds and grounded so they survive the settled-open-play filter.
     ball = pd.DataFrame(
         {
             "timestamp": pd.to_datetime(
                 ["2026-01-04 00:00:00.000", "2026-01-04 00:00:00.100", "2026-01-04 00:00:00.200"]
             ),
             "period": [1.0, 1.0, 1.0],
+            "ball_x": [0.0, 0.0, 0.0],
+            "ball_y": [0.0, 0.0, 0.0],
+            "ball_z": [0.0, 0.0, 0.0],
+            "is_detected": [True, True, True],
             "possession_team_group": ["home team", "home team", "home team"],
         }
     )
@@ -170,14 +175,21 @@ def test_extract_match_formations_structure_and_labels():
         }
     )
 
+    # settle_seconds=0 so the 3-frame window isn't consumed by the resettle buffer.
     result = extract_match_formations(
         tracking, ball, roster, positions, match_row,
-        tolerance_m=6.0, interval_min=5, min_frames=1,
+        tolerance_m=6.0, interval_min=5, min_frames=1, settle_seconds=0.0,
     )
 
     assert result["match_id"] == "TESTMATCH"
     assert result["teams"] == {"home": 1, "away": 2}
-    assert result["params"] == {"interval_min": 5, "tolerance_m": 6.0}
+    assert result["params"] == {
+        "interval_min": 5,
+        "tolerance_m": 6.0,
+        "min_frames": 1,
+        "z_max": 2.0,
+        "settle_seconds": 0.0,
+    }
     # frames 10-12 are all in interval "0"; home in possession -> 4-4-2 attacking
     assert result["intervals"]["0"]["home"]["in_possession"] == "4-4-2"
     # home never out of possession in this window -> None
@@ -205,6 +217,10 @@ def test_extract_excludes_players_missing_from_roster():
                 ["2026-01-04 00:00:00.000", "2026-01-04 00:00:00.100", "2026-01-04 00:00:00.200"]
             ),
             "period": [1.0, 1.0, 1.0],
+            "ball_x": [0.0, 0.0, 0.0],
+            "ball_y": [0.0, 0.0, 0.0],
+            "ball_z": [0.0, 0.0, 0.0],
+            "is_detected": [True, True, True],
             "possession_team_group": ["home team", "home team", "home team"],
         }
     )
@@ -232,7 +248,7 @@ def test_extract_excludes_players_missing_from_roster():
 
     result = extract_match_formations(
         tracking, ball, roster, positions, match_row,
-        tolerance_m=6.0, interval_min=5, min_frames=1,
+        tolerance_m=6.0, interval_min=5, min_frames=1, settle_seconds=0.0,
     )
 
     assert result["intervals"]["0"]["home"]["in_possession"] == "4-4-2"
@@ -250,6 +266,60 @@ def test_write_formations_json_roundtrip(tmp_path):
     write_formations_json(result, out)
     assert out.exists()
     assert json.loads(out.read_text()) == result
+
+
+from football_ml.formations import settled_open_play_frames
+
+
+def _synthetic_ball(n, p1_start=10, bad=None):
+    """Ball rows at 10 fps in period 1; ``bad`` maps frame-index -> exclusion reason.
+
+    Frame derived from the timestamp equals ``p1_start + index``.
+    """
+    bad = bad or {}
+    ts = pd.date_range("2026-01-04 00:00:00", periods=n, freq="100ms")
+    cols = {
+        "timestamp": ts,
+        "period": [1.0] * n,
+        "ball_x": [0.0] * n,
+        "ball_y": [0.0] * n,
+        "ball_z": [0.0] * n,
+        "is_detected": [True] * n,
+        "possession_team_group": ["home team"] * n,
+    }
+    for i, reason in bad.items():
+        if reason == "oob":
+            cols["ball_x"][i] = 60.0
+        elif reason == "air":
+            cols["ball_z"][i] = 5.0
+        elif reason == "dead":
+            cols["possession_team_group"][i] = None
+        elif reason == "undet":
+            cols["is_detected"][i] = False
+    return pd.DataFrame(cols)
+
+
+def test_settled_open_play_buffer_and_out_of_bounds():
+    # 60 frames, one out-of-bounds blip at index 30; settle buffer = 2s = 20 frames.
+    ball = _synthetic_ball(60, bad={30: "oob"})
+    kept = settled_open_play_frames(ball, 10, 27800, z_max=2.0, settle_seconds=2.0)
+    assert 10 + 30 not in kept  # the out-of-bounds frame itself
+    assert 10 + 29 in kept      # settled, just before the blip (past initial buffer)
+    assert 10 + 19 not in kept  # inside the initial 20-frame settle buffer
+    assert 10 + 50 not in kept  # index 50 -> run=20, still buffered after the blip
+    assert 10 + 51 in kept      # index 51 -> run=21, first kept after the blip
+    assert 10 + 55 in kept
+
+
+def test_settled_open_play_excludes_aerial_dead_and_undetected():
+    # No settle buffer, so only the per-frame reasons remove frames.
+    ball = _synthetic_ball(40, bad={20: "air", 25: "dead", 30: "undet"})
+    kept = settled_open_play_frames(ball, 10, 27800, z_max=2.0, settle_seconds=0.0)
+    assert 10 + 20 not in kept  # aerial ball
+    assert 10 + 25 not in kept  # loose/dead ball
+    assert 10 + 30 not in kept  # ball not detected
+    assert 10 + 19 in kept
+    assert 10 + 21 in kept      # frame after aerial is settled again
 
 
 def test_end_to_end_smoke_real_match():

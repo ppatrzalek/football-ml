@@ -158,6 +158,70 @@ def mode_label(labels: Sequence[str], min_frames: int) -> str | None:
     return Counter(valid).most_common(1)[0][0]
 
 
+def settled_open_play_frames(
+    ball: pd.DataFrame,
+    p1_start: int,
+    p2_start: int,
+    *,
+    z_max: float = 2.0,
+    settle_seconds: float = 5.0,
+    half_length: float = 52.5,
+    half_width: float = 34.0,
+) -> set[int]:
+    """Frames of settled open play, inferred from ball tracking.
+
+    A frame is *in play* when the ball is in bounds, grounded, detected, and
+    possessed. Since the data has no restart/event labels, this stands in for
+    excluding throw-ins, corners, goal kicks, aerial deliveries, and dead/loose
+    ball. In addition, the first ``settle_seconds`` (at 10 fps) after every
+    return from a not-in-play stretch are dropped, so players have time to
+    resettle into shape before a frame counts.
+
+    Parameters
+    ----------
+    ball : pd.DataFrame
+        Ball tracking for one match (timestamp, period, ball_x/y/z, is_detected,
+        possession_team_group).
+    p1_start, p2_start : int
+        Player-tracking start frame of each period.
+    z_max : float
+        Maximum ball height (m) for a frame to count as grounded.
+    settle_seconds : float
+        Seconds to drop after each return to play.
+    half_length, half_width : float
+        Half pitch length/width (m); the ball is out when it crosses these.
+
+    Returns
+    -------
+    set[int]
+        Player-tracking frames to keep.
+    """
+    b = ball.copy()
+    secs = (b["timestamp"] - b["timestamp"].dt.normalize()).dt.total_seconds()
+    b["frame"] = [ball_frame(s, p, p1_start, p2_start) for s, p in zip(secs, b["period"])]
+    b["in_play"] = (
+        (b["ball_x"].abs() <= half_length)
+        & (b["ball_y"].abs() <= half_width)
+        & (b["ball_z"] <= z_max)
+        & b["is_detected"].astype(bool)
+        & b["possession_team_group"].notna()
+    ).to_numpy()
+
+    settle_frames = int(round(settle_seconds * 10))
+    kept: set[int] = set()
+    for _, g in b.groupby("period", sort=False):
+        g = g.sort_values("frame")
+        run = 0  # consecutive in-play frames
+        for frame, in_play in zip(g["frame"], g["in_play"]):
+            if in_play:
+                run += 1
+                if run > settle_frames:
+                    kept.add(int(frame))
+            else:
+                run = 0
+    return kept
+
+
 def extract_match_formations(
     tracking: pd.DataFrame,
     ball: pd.DataFrame,
@@ -167,7 +231,9 @@ def extract_match_formations(
     *,
     tolerance_m: float = 6.0,
     interval_min: int = 5,
-    min_frames: int = 50,
+    min_frames: int = 300,
+    z_max: float = 2.0,
+    settle_seconds: float = 5.0,
 ) -> dict:
     """Extract per-interval attacking/defensive formations for one match.
 
@@ -212,6 +278,13 @@ def extract_match_formations(
     poss = poss[~poss.index.duplicated()]
     t["possession"] = t["frame"].map(poss)
 
+    # Keep only settled open-play frames (drops restarts, aerial deliveries,
+    # dead/loose ball, and a resettle buffer) so formation reflects real shape.
+    kept = settled_open_play_frames(
+        ball, p1s, p2s, z_max=z_max, settle_seconds=settle_seconds
+    )
+    t = t[t["frame"].isin(kept)]
+
     records = []
     # POC-scoped: per-frame Python loop over ~87k team-frames; fine for this
     # 10-match POC but would need vectorization for a full-season run.
@@ -248,7 +321,13 @@ def extract_match_formations(
 
     return {
         "match_id": str(match_row["match_id"]),
-        "params": {"interval_min": interval_min, "tolerance_m": tolerance_m},
+        "params": {
+            "interval_min": interval_min,
+            "tolerance_m": tolerance_m,
+            "min_frames": min_frames,
+            "z_max": z_max,
+            "settle_seconds": settle_seconds,
+        },
         "teams": {"home": home_id, "away": away_id},
         "intervals": intervals,
     }
