@@ -243,3 +243,10 @@ def extract_match_formations(
         "teams": {"home": home_id, "away": away_id},
         "intervals": intervals,
     }
+
+
+def write_formations_json(result: dict, out_path: Path) -> None:
+    """Write a formations result dict to ``out_path`` as indented JSON."""
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(result, indent=2))

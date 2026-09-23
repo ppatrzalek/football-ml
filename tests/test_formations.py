@@ -182,3 +182,48 @@ def test_extract_match_formations_structure_and_labels():
     assert result["intervals"]["0"]["home"]["in_possession"] == "4-4-2"
     # home never out of possession in this window -> None
     assert result["intervals"]["0"]["home"]["out_of_possession"] is None
+
+
+import json
+
+from football_ml.formations import write_formations_json
+
+
+def test_write_formations_json_roundtrip(tmp_path):
+    result = {"match_id": "X", "params": {}, "teams": {"home": 1, "away": 2}, "intervals": {}}
+    out = tmp_path / "formations" / "match_X.json"
+    write_formations_json(result, out)
+    assert out.exists()
+    assert json.loads(out.read_text()) == result
+
+
+def test_end_to_end_smoke_real_match():
+    # Integration: runs the real pipeline on match 1886347.
+    import pandas as pd
+    from football_ml.config import RAW_DATA_DIR
+    from football_ml.formations import extract_match_formations
+
+    mid = "1886347"
+    tracking = pd.read_parquet(RAW_DATA_DIR / "fct_players_tracking.parquet")
+    tracking = tracking[tracking["match_id"] == mid]
+    ball = pd.read_parquet(RAW_DATA_DIR / "fct_ball_tracking.parquet")
+    ball = ball[ball["match_id"] == mid]
+    roster = pd.read_parquet(RAW_DATA_DIR / "fct_match_players.parquet")
+    roster = roster[roster["match_id"] == mid]
+    positions = pd.read_parquet(RAW_DATA_DIR / "dim_players_position.parquet")
+    dim_match = pd.read_parquet(RAW_DATA_DIR / "dim_match.parquet")
+    match_row = dim_match[dim_match["match_id"] == mid].iloc[0]
+
+    result = extract_match_formations(tracking, ball, roster, positions, match_row)
+
+    assert result["match_id"] == mid
+    assert result["intervals"], "expected at least one interval"
+    for cell in result["intervals"].values():
+        for team in ("home", "away"):
+            for phase in ("in_possession", "out_of_possession"):
+                label = cell[team][phase]
+                if label is None:
+                    continue
+                digits = [int(n) for n in label.split("-")]
+                assert 3 <= len(digits) <= 4
+                assert sum(digits) in (9, 10)
