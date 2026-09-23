@@ -156,3 +156,90 @@ def mode_label(labels: Sequence[str], min_frames: int) -> str | None:
     if len(valid) < min_frames:
         return None
     return Counter(valid).most_common(1)[0][0]
+
+
+def extract_match_formations(
+    tracking: pd.DataFrame,
+    ball: pd.DataFrame,
+    roster: pd.DataFrame,
+    positions: pd.DataFrame,
+    match_row: pd.Series,
+    *,
+    tolerance_m: float = 6.0,
+    interval_min: int = 5,
+    min_frames: int = 50,
+) -> dict:
+    """Extract per-interval attacking/defensive formations for one match.
+
+    See the plan/spec for the shape of each input frame and the returned dict.
+    """
+    home_id = int(match_row["home_team.id"])
+    away_id = int(match_row["away_team.id"])
+    hts = match_row["home_team_side"]
+    p1s = int(match_row["match_period_1st_start_frame"])
+    p2s = int(match_row["match_period_2nd_start_frame"])
+
+    roster = roster.merge(
+        positions[["player_role_id", "player_role_name"]], on="player_role_id", how="left"
+    )
+    role_map = roster.set_index("player_id")["player_role_name"].to_dict()
+    team_map = roster.set_index("player_id")["team_id"].to_dict()
+
+    t = tracking.copy()
+    t["player_role_name"] = t["player_id"].map(role_map)
+    t["team_id"] = t["player_id"].map(team_map)
+    t = t[t["player_role_name"] != GK_ROLE_NAME]
+    t["is_home"] = t["team_id"] == home_id
+    t["depth"] = [
+        attack_sign(h, p, hts) * x
+        for h, p, x in zip(t["is_home"], t["period"], t["player_x"])
+    ]
+    t["interval"] = [
+        interval_key(f, p, p1s, p2s, interval_min)
+        for f, p in zip(t["frame"], t["period"])
+    ]
+
+    secs = (ball["timestamp"] - ball["timestamp"].dt.normalize()).dt.total_seconds()
+    bframes = [ball_frame(s, p, p1s, p2s) for s, p in zip(secs, ball["period"])]
+    poss = pd.Series(ball["possession_team_group"].to_numpy(), index=bframes)
+    poss = poss[~poss.index.duplicated()]
+    t["possession"] = t["frame"].map(poss)
+
+    records = []
+    for (interval, is_home), g in t.groupby(["interval", "is_home"], sort=False):
+        for frame, gf in g.groupby("frame", sort=False):
+            depths = gf["depth"].to_numpy()
+            if len(depths) < 9:  # need a full-ish outfield; skip tracking gaps
+                continue
+            label = classify_formation(depths, tolerance_m)
+            poss_val = gf["possession"].iloc[0]
+            own = "home team" if is_home else "away team"
+            opp = "away team" if is_home else "home team"
+            records.append(
+                {
+                    "interval": interval,
+                    "is_home": bool(is_home),
+                    "in_poss": poss_val == own,
+                    "out_poss": poss_val == opp,
+                    "label": label,
+                }
+            )
+
+    df = pd.DataFrame(records, columns=["interval", "is_home", "in_poss", "out_poss", "label"])
+    intervals: dict[str, dict] = {}
+    for interval in sorted(df["interval"].unique()) if not df.empty else []:
+        cell = {}
+        for is_home, key in [(True, "home"), (False, "away")]:
+            sub = df[(df["interval"] == interval) & (df["is_home"] == is_home)]
+            cell[key] = {
+                "in_possession": mode_label(sub[sub["in_poss"]]["label"].tolist(), min_frames),
+                "out_of_possession": mode_label(sub[sub["out_poss"]]["label"].tolist(), min_frames),
+            }
+        intervals[str(int(interval))] = cell
+
+    return {
+        "match_id": str(match_row["match_id"]),
+        "params": {"interval_min": interval_min, "tolerance_m": tolerance_m},
+        "teams": {"home": home_id, "away": away_id},
+        "intervals": intervals,
+    }

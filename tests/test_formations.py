@@ -110,3 +110,75 @@ def test_mode_label_none_when_too_few():
 
 def test_mode_label_none_when_empty():
     assert mode_label([], min_frames=1) is None
+
+
+import pandas as pd
+
+from football_ml.formations import extract_match_formations
+
+
+def _make_tracking(frames, team_players, period=1.0):
+    """Build tracking rows placing each player at a fixed x giving a 4-4-2 shape."""
+    rows = []
+    for frame in frames:
+        for player_id, x in team_players:
+            rows.append(
+                {"player_id": player_id, "player_x": x, "period": period, "frame": frame}
+            )
+    return pd.DataFrame(rows)
+
+
+def test_extract_match_formations_structure_and_labels():
+    # Home team (id 1): GK + 4-4-2 outfielders. home_team_side left_to_right,
+    # so depth = +player_x. Defenders x=0, mid x=20, fwd x=40.
+    outfield_x = [0, 0, 0, 0, 20, 20, 20, 20, 40, 40]
+    home_players = [(100, 0)]  # GK at x=0, dropped by role
+    home_players += [(101 + i, x) for i, x in enumerate(outfield_x)]
+
+    frames = [10, 11, 12]
+    tracking = _make_tracking(frames, home_players)
+
+    # ball: home in possession for all three frames (period 1, ~1s in)
+    ball = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(
+                ["2026-01-04 00:00:00.000", "2026-01-04 00:00:00.100", "2026-01-04 00:00:00.200"]
+            ),
+            "period": [1.0, 1.0, 1.0],
+            "possession_team_group": ["home team", "home team", "home team"],
+        }
+    )
+
+    roster = pd.DataFrame(
+        {
+            "player_id": [100] + [101 + i for i in range(10)],
+            "team_id": [1] * 11,
+            "player_role_id": [0] + [2] * 10,  # 0 = GK, 2 = outfield
+        }
+    )
+    positions = pd.DataFrame(
+        {"player_role_id": [0, 2], "player_role_name": ["Goalkeeper", "Center Back"]}
+    )
+    match_row = pd.Series(
+        {
+            "match_id": "TESTMATCH",
+            "home_team.id": 1,
+            "away_team.id": 2,
+            "home_team_side": "left_to_right",
+            "match_period_1st_start_frame": 10,
+            "match_period_2nd_start_frame": 27800,
+        }
+    )
+
+    result = extract_match_formations(
+        tracking, ball, roster, positions, match_row,
+        tolerance_m=6.0, interval_min=5, min_frames=1,
+    )
+
+    assert result["match_id"] == "TESTMATCH"
+    assert result["teams"] == {"home": 1, "away": 2}
+    assert result["params"] == {"interval_min": 5, "tolerance_m": 6.0}
+    # frames 10-12 are all in interval "0"; home in possession -> 4-4-2 attacking
+    assert result["intervals"]["0"]["home"]["in_possession"] == "4-4-2"
+    # home never out of possession in this window -> None
+    assert result["intervals"]["0"]["home"]["out_of_possession"] is None
