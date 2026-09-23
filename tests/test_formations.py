@@ -214,3 +214,6 @@ def test_end_to_end_smoke_real_match():
                 digits = [int(n) for n in label.split("-")]
                 assert 3 <= len(digits) <= 4
                 assert sum(digits) in (9, 10)
+    # Guards the match_id-dtype fix: team ids resolve to non-null ints.
+    assert isinstance(result["teams"]["home"], int) and result["teams"]["home"] is not None
+    assert isinstance(result["teams"]["away"], int) and result["teams"]["away"] is not None

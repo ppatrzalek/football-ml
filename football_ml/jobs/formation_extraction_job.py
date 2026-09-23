@@ -16,6 +16,17 @@ def run(
 ) -> dict:
     """Load a match, extract formations, and write the JSON output.
 
+    Parameters
+    ----------
+    match_id : str
+        Identifier of the match to process (coerced to str for filtering).
+    tolerance_m : float
+        Line-keeping tolerance in meters passed to the classifier.
+    interval_min : int
+        Length in minutes of each aggregation interval.
+    min_frames : int
+        Minimum valid frames required to emit a formation for an interval.
+
     Returns
     -------
     dict
