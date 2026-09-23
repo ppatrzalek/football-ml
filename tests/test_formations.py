@@ -184,6 +184,61 @@ def test_extract_match_formations_structure_and_labels():
     assert result["intervals"]["0"]["home"]["out_of_possession"] is None
 
 
+def test_extract_excludes_players_missing_from_roster():
+    # Home and away both set up as clean 4-4-2s, plus one extra tracking
+    # player_id (999) that is NOT present in the roster. Without the fix,
+    # that player's team_id is NaN, survives the GK filter, and
+    # `is_home = (NaN == home_id)` evaluates False -> it is silently counted
+    # into the away team's frame (11 players -> "5-4-2"). The fix must drop
+    # it, leaving both formations clean 4-4-2s.
+    outfield_x = [0, 0, 0, 0, 20, 20, 20, 20, 40, 40]
+    home_players = [(100, 0)] + [(101 + i, x) for i, x in enumerate(outfield_x)]
+    away_players = [(200, 0)] + [(201 + i, -x) for i, x in enumerate(outfield_x)]
+    stray = [(999, 5)]  # not in roster
+
+    frames = [10, 11, 12]
+    tracking = _make_tracking(frames, home_players + away_players + stray)
+
+    ball = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(
+                ["2026-01-04 00:00:00.000", "2026-01-04 00:00:00.100", "2026-01-04 00:00:00.200"]
+            ),
+            "period": [1.0, 1.0, 1.0],
+            "possession_team_group": ["home team", "home team", "home team"],
+        }
+    )
+
+    roster = pd.DataFrame(
+        {
+            "player_id": [100] + [101 + i for i in range(10)] + [200] + [201 + i for i in range(10)],
+            "team_id": [1] * 11 + [2] * 11,
+            "player_role_id": ([0] + [2] * 10) * 2,  # 0 = GK, 2 = outfield
+        }
+    )
+    positions = pd.DataFrame(
+        {"player_role_id": [0, 2], "player_role_name": ["Goalkeeper", "Center Back"]}
+    )
+    match_row = pd.Series(
+        {
+            "match_id": "TESTMATCH",
+            "home_team.id": 1,
+            "away_team.id": 2,
+            "home_team_side": "left_to_right",
+            "match_period_1st_start_frame": 10,
+            "match_period_2nd_start_frame": 27800,
+        }
+    )
+
+    result = extract_match_formations(
+        tracking, ball, roster, positions, match_row,
+        tolerance_m=6.0, interval_min=5, min_frames=1,
+    )
+
+    assert result["intervals"]["0"]["home"]["in_possession"] == "4-4-2"
+    assert result["intervals"]["0"]["away"]["out_of_possession"] == "4-4-2"
+
+
 import json
 
 from football_ml.formations import write_formations_json

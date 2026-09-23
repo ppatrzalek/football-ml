@@ -188,6 +188,11 @@ def extract_match_formations(
     t = tracking.copy()
     t["player_role_name"] = t["player_id"].map(role_map)
     t["team_id"] = t["player_id"].map(team_map)
+    # Drop tracking players missing from the roster: an unmatched player_id maps
+    # to team_id NaN, which is not the GK and would otherwise default to the
+    # away bucket below (NaN == home_id is False), silently corrupting that
+    # frame's player count.
+    t = t[t["team_id"].notna()]
     t = t[t["player_role_name"] != GK_ROLE_NAME]
     t["is_home"] = t["team_id"] == home_id
     t["depth"] = [
@@ -199,6 +204,8 @@ def extract_match_formations(
         for f, p in zip(t["frame"], t["period"])
     ]
 
+    # Assumes each match's ball timestamps share one calendar day; a kickoff
+    # spanning midnight would need a different anchor than day-normalize.
     secs = (ball["timestamp"] - ball["timestamp"].dt.normalize()).dt.total_seconds()
     bframes = [ball_frame(s, p, p1s, p2s) for s, p in zip(secs, ball["period"])]
     poss = pd.Series(ball["possession_team_group"].to_numpy(), index=bframes)
@@ -206,6 +213,8 @@ def extract_match_formations(
     t["possession"] = t["frame"].map(poss)
 
     records = []
+    # POC-scoped: per-frame Python loop over ~87k team-frames; fine for this
+    # 10-match POC but would need vectorization for a full-season run.
     for (interval, is_home), g in t.groupby(["interval", "is_home"], sort=False):
         for frame, gf in g.groupby("frame", sort=False):
             depths = gf["depth"].to_numpy()
