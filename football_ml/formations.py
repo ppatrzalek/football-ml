@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 GK_ROLE_NAME = "Goalkeeper"
+MIN_OUTFIELDERS = 9  # min tracked outfielders (9 after a red card) to classify a frame
 
 
 def attack_sign(is_home: bool, period: float, home_team_side: str) -> int:
@@ -122,6 +123,16 @@ def ball_frame(
     return start + int(round(half * 10))
 
 
+def _ball_frames(ball: pd.DataFrame, p1_start: int, p2_start: int) -> list[int]:
+    """Player-tracking frame for each ball-tracking row (via ``ball_frame``).
+
+    Assumes each match's ball timestamps share one calendar day; a kickoff
+    spanning midnight would need a different anchor than day-normalize.
+    """
+    secs = (ball["timestamp"] - ball["timestamp"].dt.normalize()).dt.total_seconds()
+    return [ball_frame(s, p, p1_start, p2_start) for s, p in zip(secs, ball["period"])]
+
+
 def interval_key(
     frame: int, period: float, p1_start: int, p2_start: int, interval_min: int
 ) -> int:
@@ -197,8 +208,7 @@ def settled_open_play_frames(
         Player-tracking frames to keep.
     """
     b = ball.copy()
-    secs = (b["timestamp"] - b["timestamp"].dt.normalize()).dt.total_seconds()
-    b["frame"] = [ball_frame(s, p, p1_start, p2_start) for s, p in zip(secs, b["period"])]
+    b["frame"] = _ball_frames(b, p1_start, p2_start)
     b["in_play"] = (
         (b["ball_x"].abs() <= half_length)
         & (b["ball_y"].abs() <= half_width)
@@ -248,8 +258,9 @@ def extract_match_formations(
     roster = roster.merge(
         positions[["player_role_id", "player_role_name"]], on="player_role_id", how="left"
     )
-    role_map = roster.set_index("player_id")["player_role_name"].to_dict()
-    team_map = roster.set_index("player_id")["team_id"].to_dict()
+    roster_by_player = roster.set_index("player_id")
+    role_map = roster_by_player["player_role_name"].to_dict()
+    team_map = roster_by_player["team_id"].to_dict()
 
     t = tracking.copy()
     t["player_role_name"] = t["player_id"].map(role_map)
@@ -270,10 +281,7 @@ def extract_match_formations(
         for f, p in zip(t["frame"], t["period"])
     ]
 
-    # Assumes each match's ball timestamps share one calendar day; a kickoff
-    # spanning midnight would need a different anchor than day-normalize.
-    secs = (ball["timestamp"] - ball["timestamp"].dt.normalize()).dt.total_seconds()
-    bframes = [ball_frame(s, p, p1s, p2s) for s, p in zip(secs, ball["period"])]
+    bframes = _ball_frames(ball, p1s, p2s)
     poss = pd.Series(ball["possession_team_group"].to_numpy(), index=bframes)
     poss = poss[~poss.index.duplicated()]
     t["possession"] = t["frame"].map(poss)
@@ -291,7 +299,7 @@ def extract_match_formations(
     for (interval, is_home), g in t.groupby(["interval", "is_home"], sort=False):
         for frame, gf in g.groupby("frame", sort=False):
             depths = gf["depth"].to_numpy()
-            if len(depths) < 9:  # need a full-ish outfield; skip tracking gaps
+            if len(depths) < MIN_OUTFIELDERS:  # skip tracking gaps
                 continue
             label = classify_formation(depths, tolerance_m)
             poss_val = gf["possession"].iloc[0]

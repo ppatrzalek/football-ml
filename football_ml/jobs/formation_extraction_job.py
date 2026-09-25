@@ -7,6 +7,12 @@ from football_ml.config import PROCESSED_DATA_DIR, RAW_DATA_DIR, logger
 from football_ml.formations import extract_match_formations, write_formations_json
 
 
+def _read_for_match(path, match_id: str) -> pd.DataFrame:
+    """Read a parquet table and keep only rows for ``match_id`` (dtype-safe)."""
+    df = pd.read_parquet(path)
+    return df[df["match_id"].astype(str) == match_id]
+
+
 def run(
     match_id: str = "1886347",
     *,
@@ -39,15 +45,11 @@ def run(
         The formations result (also written to disk).
     """
     match_id = str(match_id)
-    tracking = pd.read_parquet(RAW_DATA_DIR / "fct_players_tracking.parquet")
-    tracking = tracking[tracking["match_id"].astype(str) == match_id]
-    ball = pd.read_parquet(RAW_DATA_DIR / "fct_ball_tracking.parquet")
-    ball = ball[ball["match_id"].astype(str) == match_id]
-    roster = pd.read_parquet(RAW_DATA_DIR / "fct_match_players.parquet")
-    roster = roster[roster["match_id"].astype(str) == match_id]
+    tracking = _read_for_match(RAW_DATA_DIR / "fct_players_tracking.parquet", match_id)
+    ball = _read_for_match(RAW_DATA_DIR / "fct_ball_tracking.parquet", match_id)
+    roster = _read_for_match(RAW_DATA_DIR / "fct_match_players.parquet", match_id)
     positions = pd.read_parquet(RAW_DATA_DIR / "dim_players_position.parquet")
-    dim_match = pd.read_parquet(RAW_DATA_DIR / "dim_match.parquet")
-    match_row = dim_match[dim_match["match_id"].astype(str) == match_id].iloc[0]
+    match_row = _read_for_match(RAW_DATA_DIR / "dim_match.parquet", match_id).iloc[0]
 
     result = extract_match_formations(
         tracking, ball, roster, positions, match_row,

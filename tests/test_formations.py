@@ -1,5 +1,7 @@
 """Tests for football_ml.formations."""
 import numpy as np
+import pandas as pd
+import pytest
 
 from football_ml.formations import attack_sign
 
@@ -112,8 +114,6 @@ def test_mode_label_none_when_empty():
     assert mode_label([], min_frames=1) is None
 
 
-import pandas as pd
-
 from football_ml.formations import extract_match_formations
 
 
@@ -128,19 +128,13 @@ def _make_tracking(frames, team_players, period=1.0):
     return pd.DataFrame(rows)
 
 
-def test_extract_match_formations_structure_and_labels():
-    # Home team (id 1): GK + 4-4-2 outfielders. home_team_side left_to_right,
-    # so depth = +player_x. Defenders x=0, mid x=20, fwd x=40.
-    outfield_x = [0, 0, 0, 0, 20, 20, 20, 20, 40, 40]
-    home_players = [(100, 0)]  # GK at x=0, dropped by role
-    home_players += [(101 + i, x) for i, x in enumerate(outfield_x)]
+@pytest.fixture
+def possession_ball():
+    """Ball for frames 10-12 (period 1, ~1s in): in-bounds, grounded, home in possession.
 
-    frames = [10, 11, 12]
-    tracking = _make_tracking(frames, home_players)
-
-    # ball: home in possession for all three frames (period 1, ~1s in),
-    # in-bounds and grounded so they survive the settled-open-play filter.
-    ball = pd.DataFrame(
+    Kept by the settled-open-play filter, so the 3-frame window survives.
+    """
+    return pd.DataFrame(
         {
             "timestamp": pd.to_datetime(
                 ["2026-01-04 00:00:00.000", "2026-01-04 00:00:00.100", "2026-01-04 00:00:00.200"]
@@ -154,17 +148,19 @@ def test_extract_match_formations_structure_and_labels():
         }
     )
 
-    roster = pd.DataFrame(
-        {
-            "player_id": [100] + [101 + i for i in range(10)],
-            "team_id": [1] * 11,
-            "player_role_id": [0] + [2] * 10,  # 0 = GK, 2 = outfield
-        }
-    )
-    positions = pd.DataFrame(
+
+@pytest.fixture
+def base_positions():
+    """Role lookup: role 0 = Goalkeeper (dropped), role 2 = outfield."""
+    return pd.DataFrame(
         {"player_role_id": [0, 2], "player_role_name": ["Goalkeeper", "Center Back"]}
     )
-    match_row = pd.Series(
+
+
+@pytest.fixture
+def base_match_row():
+    """dim_match row for a synthetic match (home id 1, away id 2, left_to_right)."""
+    return pd.Series(
         {
             "match_id": "TESTMATCH",
             "home_team.id": 1,
@@ -175,9 +171,28 @@ def test_extract_match_formations_structure_and_labels():
         }
     )
 
+
+def test_extract_match_formations_structure_and_labels(
+    possession_ball, base_positions, base_match_row
+):
+    # Home team (id 1): GK + 4-4-2 outfielders. home_team_side left_to_right,
+    # so depth = +player_x. Defenders x=0, mid x=20, fwd x=40.
+    outfield_x = [0, 0, 0, 0, 20, 20, 20, 20, 40, 40]
+    home_players = [(100, 0)]  # GK at x=0, dropped by role
+    home_players += [(101 + i, x) for i, x in enumerate(outfield_x)]
+
+    tracking = _make_tracking([10, 11, 12], home_players)
+    roster = pd.DataFrame(
+        {
+            "player_id": [100] + [101 + i for i in range(10)],
+            "team_id": [1] * 11,
+            "player_role_id": [0] + [2] * 10,  # 0 = GK, 2 = outfield
+        }
+    )
+
     # settle_seconds=0 so the 3-frame window isn't consumed by the resettle buffer.
     result = extract_match_formations(
-        tracking, ball, roster, positions, match_row,
+        tracking, possession_ball, roster, base_positions, base_match_row,
         tolerance_m=6.0, interval_min=5, min_frames=1, settle_seconds=0.0,
     )
 
@@ -196,7 +211,9 @@ def test_extract_match_formations_structure_and_labels():
     assert result["intervals"]["0"]["home"]["out_of_possession"] is None
 
 
-def test_extract_excludes_players_missing_from_roster():
+def test_extract_excludes_players_missing_from_roster(
+    possession_ball, base_positions, base_match_row
+):
     # Home and away both set up as clean 4-4-2s, plus one extra tracking
     # player_id (999) that is NOT present in the roster. Without the fix,
     # that player's team_id is NaN, survives the GK filter, and
@@ -208,23 +225,7 @@ def test_extract_excludes_players_missing_from_roster():
     away_players = [(200, 0)] + [(201 + i, -x) for i, x in enumerate(outfield_x)]
     stray = [(999, 5)]  # not in roster
 
-    frames = [10, 11, 12]
-    tracking = _make_tracking(frames, home_players + away_players + stray)
-
-    ball = pd.DataFrame(
-        {
-            "timestamp": pd.to_datetime(
-                ["2026-01-04 00:00:00.000", "2026-01-04 00:00:00.100", "2026-01-04 00:00:00.200"]
-            ),
-            "period": [1.0, 1.0, 1.0],
-            "ball_x": [0.0, 0.0, 0.0],
-            "ball_y": [0.0, 0.0, 0.0],
-            "ball_z": [0.0, 0.0, 0.0],
-            "is_detected": [True, True, True],
-            "possession_team_group": ["home team", "home team", "home team"],
-        }
-    )
-
+    tracking = _make_tracking([10, 11, 12], home_players + away_players + stray)
     roster = pd.DataFrame(
         {
             "player_id": [100] + [101 + i for i in range(10)] + [200] + [201 + i for i in range(10)],
@@ -232,22 +233,9 @@ def test_extract_excludes_players_missing_from_roster():
             "player_role_id": ([0] + [2] * 10) * 2,  # 0 = GK, 2 = outfield
         }
     )
-    positions = pd.DataFrame(
-        {"player_role_id": [0, 2], "player_role_name": ["Goalkeeper", "Center Back"]}
-    )
-    match_row = pd.Series(
-        {
-            "match_id": "TESTMATCH",
-            "home_team.id": 1,
-            "away_team.id": 2,
-            "home_team_side": "left_to_right",
-            "match_period_1st_start_frame": 10,
-            "match_period_2nd_start_frame": 27800,
-        }
-    )
 
     result = extract_match_formations(
-        tracking, ball, roster, positions, match_row,
+        tracking, possession_ball, roster, base_positions, base_match_row,
         tolerance_m=6.0, interval_min=5, min_frames=1, settle_seconds=0.0,
     )
 
