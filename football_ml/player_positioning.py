@@ -8,6 +8,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from football_ml.formations import _constrain_lines, _greedy_lines
+
 N_BANDS = 8
 N_LANES = 4
 N_ZONES = N_BANDS * N_LANES
@@ -146,3 +148,53 @@ def player_interval_features(
         "mean_depth", "mean_lateral", "std_depth", "std_lateral",
         "ellipse_area", "zone_entropy", *zcols,
     ])
+
+
+def assign_players_to_lines(
+    frame: pd.DataFrame,
+    *,
+    tolerance_m: float = 6.0,
+    min_frames: int = 50,
+) -> dict:
+    """Assign on-pitch outfielders to formation lines by interval-average depth.
+
+    For each (interval, team, phase): keep outfielders present in at least
+    ``min_frames`` frames (the 10 most-present if a substitution inflates the
+    count), cluster their mean depths with the formation line algorithm, and
+    emit lines ordered defence->attack with player membership.
+
+    Returns
+    -------
+    dict
+        Keyed by ``(interval, is_home, phase)`` -> list of line dicts
+        ``{"depth_rank", "size", "player_ids", "mean_depths"}``.
+    """
+    f = with_phase(frame)
+    result: dict = {}
+    for (interval, is_home, phase), g in f.groupby(
+        ["interval", "is_home", "phase"], sort=False
+    ):
+        counts = g.groupby("player_id").size()
+        means = g.groupby("player_id")["depth"].mean()
+        present = counts[counts >= min_frames]
+        if present.empty:
+            continue
+        # keep the 10 most-present (ties broken by higher count then player_id)
+        keep = present.sort_values(ascending=False).head(10).index
+        player_means = means.loc[keep].sort_values()  # ascending depth
+        pids = list(player_means.index)
+        depths_sorted = player_means.to_numpy()
+        lines = _constrain_lines(_greedy_lines(depths_sorted, tolerance_m))
+        out_lines = []
+        pos = 0
+        for rank, line in enumerate(lines):
+            size = len(line)
+            out_lines.append({
+                "depth_rank": rank,
+                "size": size,
+                "player_ids": pids[pos:pos + size],
+                "mean_depths": [float(d) for d in depths_sorted[pos:pos + size]],
+            })
+            pos += size
+        result[(int(interval), bool(is_home), phase)] = out_lines
+    return result

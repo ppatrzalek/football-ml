@@ -9,6 +9,7 @@ from football_ml.player_positioning import (
     zone_entropy,
     with_phase,
     player_interval_features,
+    assign_players_to_lines,
     N_ZONES,
 )
 
@@ -150,3 +151,42 @@ def test_player_interval_features_no_rows_when_all_loose_ball():
     frame = _feature_frame().assign(possession=None)
     out = player_interval_features(frame, 105.0, 68.0, min_frames=1)
     assert out.empty
+
+
+def _lines_frame(player_depths, extra=None):
+    # one in-possession frame per listed (player_id, depth); all home team.
+    rows = []
+    for frame_no, snapshot in enumerate([player_depths] + (extra or [])):
+        for pid, d in snapshot.items():
+            rows.append({
+                "player_id": pid, "team_id": 10, "is_home": True,
+                "interval": 0, "depth": d, "lateral": 0.0,
+                "possession": "home team",
+            })
+    return pd.DataFrame(rows)
+
+
+def test_assign_players_442_by_mean_depth():
+    # 10 players: 4 deep, 3 mid, 3 advanced
+    depths = {1: 0, 2: 1, 3: -1, 4: 0.5, 5: 20, 6: 19, 7: 21, 8: 40, 9: 41, 10: 39}
+    out = assign_players_to_lines(_lines_frame(depths), min_frames=1)
+    lines = out[(0, True, "in")]
+    assert [ln["size"] for ln in lines] == [4, 3, 3]
+    assert set(lines[0]["player_ids"]) == {1, 2, 3, 4}  # deepest line
+
+
+def test_assign_red_card_sums_to_nine():
+    depths = {1: 0, 2: 1, 3: -1, 4: 0.5, 5: 20, 6: 19, 7: 21, 8: 40, 9: 41}
+    out = assign_players_to_lines(_lines_frame(depths), min_frames=1)
+    assert sum(ln["size"] for ln in out[(0, True, "in")]) == 9
+
+
+def test_assign_sub_keeps_ten_most_present():
+    # 10 regulars present in 2 frames, 1 sub present in only 1 frame -> dropped
+    base = {i: float(i) for i in range(1, 11)}
+    out = assign_players_to_lines(
+        _lines_frame(base, extra=[{**base, 11: 100.0}]), min_frames=2
+    )
+    assigned = {pid for ln in out[(0, True, "in")] for pid in ln["player_ids"]}
+    assert 11 not in assigned
+    assert sum(ln["size"] for ln in out[(0, True, "in")]) == 10
