@@ -10,6 +10,7 @@ from football_ml.player_positioning import (
     with_phase,
     player_interval_features,
     assign_players_to_lines,
+    rollup_player_features,
     N_ZONES,
 )
 
@@ -199,3 +200,31 @@ def test_assign_small_group_skipped_no_crash():
     out = assign_players_to_lines(_lines_frame(depths), min_frames=1)
     assert (0, True, "in") not in out
     assert out == {}
+
+
+def test_rollup_frame_weighted_occupancy_and_all_phase():
+    zcols = [f"z_b{b}_l{l}" for b in range(8) for l in range(4)]
+    def make(pid, interval, phase, n, mean_d, z):
+        occ = np.zeros(32); occ[z] = 1.0
+        base = {
+            "player_id": pid, "team_id": 10, "is_home": True,
+            "interval": interval, "phase": phase, "n_frames": n,
+            "mean_depth": mean_d, "mean_lateral": 0.0,
+            "std_depth": 0.0, "std_lateral": 0.0,
+            "ellipse_area": 0.0, "zone_entropy": 0.0,
+        }
+        base.update(dict(zip(zcols, occ)))
+        return base
+    # player 1, in-possession: interval 0 (90 frames, zone 5), interval 5 (10 frames, zone 6)
+    feats = pd.DataFrame([
+        make(1, 0, "in", 90, 20.0, 5),
+        make(1, 5, "in", 10, 20.0, 6),
+    ])
+    out = rollup_player_features(feats)
+    phases = set(out["phase"])
+    assert phases == {"in", "all"}  # no out-possession rows present
+    in_row = out[(out["player_id"] == 1) & (out["phase"] == "in")].iloc[0]
+    # frame-weighted: zone 5 -> 0.9, zone 6 -> 0.1
+    assert in_row["z_b1_l1"] == pytest.approx(0.9)  # zone 5 = band1 lane1
+    assert in_row["z_b1_l2"] == pytest.approx(0.1)  # zone 6 = band1 lane2
+    assert in_row["n_frames"] == 100

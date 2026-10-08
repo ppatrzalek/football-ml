@@ -202,3 +202,71 @@ def assign_players_to_lines(
             pos += size
         result[(int(interval), bool(is_home), str(phase))] = out_lines
     return result
+
+
+def _rollup_group(g: pd.DataFrame, zcols: list[str]) -> dict:
+    """Compute pooled-variance rollup for a group of intervals.
+
+    Pooled population variance formula:
+    - mean = Σ wᵢ·meanᵢ
+    - msq = Σ wᵢ·(stdᵢ² + meanᵢ²)
+    - std = sqrt(max(msq − mean², 0))
+    where wᵢ = nᵢ/N.
+    """
+    n = g["n_frames"].to_numpy().astype(float)
+    N = float(n.sum())
+    w = n / N
+
+    def pooled(mean_col, std_col):
+        mean = float((w * g[mean_col].to_numpy()).sum())
+        msq = float((w * (g[std_col].to_numpy() ** 2 + g[mean_col].to_numpy() ** 2)).sum())
+        return mean, float(np.sqrt(max(msq - mean ** 2, 0.0)))
+
+    mean_d, std_d = pooled("mean_depth", "std_depth")
+    mean_l, std_l = pooled("mean_lateral", "std_lateral")
+    occ = (g[zcols].to_numpy() * w[:, None]).sum(axis=0)
+    row = {
+        "player_id": g["player_id"].iloc[0],
+        "team_id": g["team_id"].iloc[0],
+        "is_home": bool(g["is_home"].iloc[0]),
+        "n_frames": int(N),
+        "mean_depth": mean_d,
+        "mean_lateral": mean_l,
+        "std_depth": std_d,
+        "std_lateral": std_l,
+        "ellipse_area": float(np.pi * std_d * std_l),
+        "zone_entropy": zone_entropy(occ),
+    }
+    row.update(dict(zip(zcols, occ)))
+    return row
+
+
+def rollup_player_features(
+    interval_features: pd.DataFrame,
+    *,
+    n_bands: int = N_BANDS,
+    n_lanes: int = N_LANES,
+) -> pd.DataFrame:
+    """Roll per-interval features up to one row per player x phase (in/out/all).
+
+    Occupancy is frame-weighted across intervals; spread scalars use pooled
+    population variance so they equal a recompute over all the player's frames.
+    """
+    zcols = [f"z_b{b}_l{l}" for b in range(n_bands) for l in range(n_lanes)]
+    cols = [
+        "player_id", "team_id", "is_home", "phase", "n_frames",
+        "mean_depth", "mean_lateral", "std_depth", "std_lateral",
+        "ellipse_area", "zone_entropy", *zcols,
+    ]
+    if interval_features.empty:
+        return pd.DataFrame(columns=cols)
+    rows = []
+    for (player_id, phase), g in interval_features.groupby(["player_id", "phase"], sort=False):
+        row = _rollup_group(g, zcols)
+        row["phase"] = phase
+        rows.append(row)
+    for player_id, g in interval_features.groupby("player_id", sort=False):
+        row = _rollup_group(g, zcols)
+        row["phase"] = "all"
+        rows.append(row)
+    return pd.DataFrame(rows, columns=cols)
