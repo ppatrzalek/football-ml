@@ -5,6 +5,9 @@ Consumes the tidy outfielder frame from
 """
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
@@ -270,3 +273,108 @@ def rollup_player_features(
         row["phase"] = "all"
         rows.append(row)
     return pd.DataFrame(rows, columns=cols)
+
+
+def _lines_to_json(lines, name_map) -> list:
+    """Convert a line-assignment list to JSON-serializable player dicts.
+
+    Parameters
+    ----------
+    lines : list
+        List of line dicts with keys ``depth_rank``, ``size``, ``player_ids``, ``mean_depths``.
+    name_map : dict
+        Mapping from player_id to short name (str).
+
+    Returns
+    -------
+    list
+        List of dicts with keys ``depth_rank``, ``size``, ``players``.
+        Each ``players`` entry is a dict with ``player_id``, ``name``, ``mean_depth`` (rounded to 1 decimal).
+    """
+    out = []
+    for ln in lines:
+        players = [
+            {
+                "player_id": pid,
+                "name": name_map.get(pid),
+                "mean_depth": round(float(md), 1),
+            }
+            for pid, md in zip(ln["player_ids"], ln["mean_depths"])
+        ]
+        out.append({"depth_rank": ln["depth_rank"], "size": ln["size"], "players": players})
+    return out
+
+
+def enrich_formations(result: dict, assignment: dict, name_map: dict) -> dict:
+    """Add ``*_lines`` player-membership blocks to a formations result dict.
+
+    For each team cell and phase, if the mode string (in_possession/out_of_possession)
+    is None, the corresponding ``*_lines`` entry is set to None. Otherwise, if the
+    assignment has an entry for that (interval, is_home, phase), it is converted to
+    named player dicts via ``_lines_to_json``; if no assignment entry exists, lines
+    is also None.
+
+    Parameters
+    ----------
+    result : dict
+        Formations result dict with structure:
+        ``{"match_id": str, "intervals": {interval_str: {"home": {...}, "away": {...}}}}``.
+        Each team cell has ``in_possession`` and ``out_of_possession`` (mode strings or None).
+    assignment : dict
+        Mapping from ``(interval, is_home, phase)`` -> list of line dicts.
+    name_map : dict
+        Mapping from player_id to short name (str).
+
+    Returns
+    -------
+    dict
+        ``result`` with ``in_possession_lines`` and ``out_of_possession_lines`` added
+        to each team cell.
+    """
+    for interval_str, cell in result["intervals"].items():
+        interval = int(interval_str)
+        for key, is_home in [("home", True), ("away", False)]:
+            team = cell[key]
+            for phase, mode_key, lines_key in [
+                ("in", "in_possession", "in_possession_lines"),
+                ("out", "out_of_possession", "out_of_possession_lines"),
+            ]:
+                if team.get(mode_key) is None:
+                    team[lines_key] = None
+                    continue
+                lines = assignment.get((interval, is_home, phase))
+                team[lines_key] = _lines_to_json(lines, name_map) if lines else None
+    return result
+
+
+def write_player_positioning(
+    interval_df: pd.DataFrame,
+    rollup_df: pd.DataFrame,
+    match_id: str,
+    out_dir,
+) -> tuple[Path, Path]:
+    """Write per-interval and rollup parquet tables.
+
+    Parameters
+    ----------
+    interval_df : pd.DataFrame
+        Per-interval features table.
+    rollup_df : pd.DataFrame
+        Rolled-up features table.
+    match_id : str
+        Match identifier.
+    out_dir : str or Path
+        Output directory (created if it does not exist).
+
+    Returns
+    -------
+    tuple[Path, Path]
+        Paths to ``match_{id}.parquet`` and ``match_{id}_rollup.parquet``.
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    p1 = out_dir / f"match_{match_id}.parquet"
+    p2 = out_dir / f"match_{match_id}_rollup.parquet"
+    interval_df.to_parquet(p1, index=False)
+    rollup_df.to_parquet(p2, index=False)
+    return p1, p2

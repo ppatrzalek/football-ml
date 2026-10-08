@@ -2,6 +2,7 @@
 import numpy as np
 import pandas as pd
 import pytest
+from pathlib import Path
 
 from football_ml.formations import build_outfielder_frame
 from football_ml.player_positioning import zone_index
@@ -12,6 +13,8 @@ from football_ml.player_positioning import (
     assign_players_to_lines,
     rollup_player_features,
     N_ZONES,
+    enrich_formations,
+    write_player_positioning,
 )
 
 
@@ -228,3 +231,39 @@ def test_rollup_frame_weighted_occupancy_and_all_phase():
     assert in_row["z_b1_l1"] == pytest.approx(0.9)  # zone 5 = band1 lane1
     assert in_row["z_b1_l2"] == pytest.approx(0.1)  # zone 6 = band1 lane2
     assert in_row["n_frames"] == 100
+
+
+def test_enrich_formations_adds_named_lines_and_nulls():
+    result = {
+        "match_id": "T1",
+        "intervals": {
+            "0": {
+                "home": {"in_possession": "4-3-3", "out_of_possession": None},
+                "away": {"in_possession": None, "out_of_possession": "4-4-2"},
+            }
+        },
+    }
+    assignment = {
+        (0, True, "in"): [
+            {"depth_rank": 0, "size": 1, "player_ids": [1], "mean_depths": [10.0]},
+        ],
+    }
+    name_map = {1: "J. Smith"}
+    out = enrich_formations(result, assignment, name_map)
+    cell = out["intervals"]["0"]["home"]
+    assert cell["in_possession_lines"][0]["players"] == [
+        {"player_id": 1, "name": "J. Smith", "mean_depth": 10.0}
+    ]
+    # mode string was None -> lines null
+    assert cell["out_of_possession_lines"] is None
+    # no assignment entry for away/in -> lines null (string was None anyway)
+    assert out["intervals"]["0"]["away"]["in_possession_lines"] is None
+
+
+def test_write_player_positioning_roundtrip(tmp_path):
+    df = pd.DataFrame({"player_id": [1], "phase": ["in"], "n_frames": [10]})
+    roll = pd.DataFrame({"player_id": [1], "phase": ["all"], "n_frames": [10]})
+    p1, p2 = write_player_positioning(df, roll, "T1", tmp_path)
+    assert p1.exists() and p2.exists()
+    assert pd.read_parquet(p1).shape[0] == 1
+    assert pd.read_parquet(p2).iloc[0]["phase"] == "all"
