@@ -4,6 +4,7 @@ import pandas as pd
 import pytest
 
 from football_ml.formations import build_outfielder_frame
+from football_ml.player_positioning import zone_index
 
 
 def _match_row():
@@ -60,3 +61,32 @@ def test_build_outfielder_frame_drops_gk_and_adds_depth_lateral():
     # away team (id 3) sign -1 in P1: depth == -player_x
     row3 = out[out["player_id"] == 3].iloc[0]
     assert row3["depth"] == pytest.approx(-30.0)
+
+
+def test_zone_index_corners_and_center():
+    L, W = 105.0, 68.0
+    # own goal line (depth = -L/2) -> band 0; opponent goal (+L/2) -> band 7
+    assert zone_index(-L / 2, 0.0, L, W)[0] == 0
+    assert zone_index(+L / 2 - 1e-6, 0.0, L, W)[0] == 7
+    # own-left touchline (lateral = -W/2) -> lane 0; own-right (+W/2) -> lane 3
+    assert zone_index(0.0, -W / 2, L, W)[1] == 0
+    assert zone_index(0.0, +W / 2 - 1e-6, L, W)[1] == 3
+    # zone = band*4 + lane
+    band, lane, zone = zone_index(+L / 2 - 1e-6, +W / 2 - 1e-6, L, W)
+    assert zone == band * 4 + lane == 31
+
+
+def test_zone_index_clips_out_of_bounds():
+    L, W = 105.0, 68.0
+    # far beyond both lines -> clipped to edge zones, never out of range
+    assert zone_index(-999.0, -999.0, L, W) == (0, 0, 0)
+    assert zone_index(+999.0, +999.0, L, W) == (7, 3, 31)
+
+
+def test_zone_index_half_mirror_symmetry():
+    # same physical point for a team attacking the opposite way in P2 maps
+    # to the same zone, because attack_sign flips both depth and lateral.
+    L, W = 105.0, 68.0
+    p1 = zone_index(20.0, 15.0, L, W)       # depth/lateral already normalized
+    p2 = zone_index(20.0, 15.0, L, W)
+    assert p1 == p2
