@@ -190,3 +190,12 @@ def test_assign_sub_keeps_ten_most_present():
     assigned = {pid for ln in out[(0, True, "in")] for pid in ln["player_ids"]}
     assert 11 not in assigned
     assert sum(ln["size"] for ln in out[(0, True, "in")]) == 10
+
+
+def test_assign_small_group_skipped_no_crash():
+    # only 2 players reach min_frames for the phase -> cannot form >=3 lines;
+    # the group is skipped (no key) and no exception is raised.
+    depths = {1: 5.0, 2: 20.0}
+    out = assign_players_to_lines(_lines_frame(depths), min_frames=1)
+    assert (0, True, "in") not in out
+    assert out == {}

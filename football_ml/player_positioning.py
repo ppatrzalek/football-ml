@@ -161,7 +161,9 @@ def assign_players_to_lines(
     For each (interval, team, phase): keep outfielders present in at least
     ``min_frames`` frames (the 10 most-present if a substitution inflates the
     count), cluster their mean depths with the formation line algorithm, and
-    emit lines ordered defence->attack with player membership.
+    emit lines ordered defence->attack with player membership. Groups with
+    fewer than 3 qualifying players are skipped (no dict entry), since at least
+    3 players are required to form >=3 formation lines.
 
     Returns
     -------
@@ -180,7 +182,9 @@ def assign_players_to_lines(
         if present.empty:
             continue
         # keep the 10 most-present (ties broken by higher count then player_id)
-        keep = present.sort_values(ascending=False).head(10).index
+        keep = present.sort_values(ascending=False, kind="stable").head(10).index
+        if len(keep) < 3:
+            continue  # cannot form >=3 formation lines from <3 players
         player_means = means.loc[keep].sort_values()  # ascending depth
         pids = list(player_means.index)
         depths_sorted = player_means.to_numpy()
@@ -196,5 +200,5 @@ def assign_players_to_lines(
                 "mean_depths": [float(d) for d in depths_sorted[pos:pos + size]],
             })
             pos += size
-        result[(int(interval), bool(is_home), phase)] = out_lines
+        result[(int(interval), bool(is_home), str(phase))] = out_lines
     return result
