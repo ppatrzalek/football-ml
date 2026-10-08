@@ -5,6 +5,12 @@ import pytest
 
 from football_ml.formations import build_outfielder_frame
 from football_ml.player_positioning import zone_index
+from football_ml.player_positioning import (
+    zone_entropy,
+    with_phase,
+    player_interval_features,
+    N_ZONES,
+)
 
 
 def _match_row():
@@ -90,3 +96,57 @@ def test_zone_index_half_mirror_symmetry():
     p1 = zone_index(20.0, 15.0, L, W)       # depth/lateral already normalized
     p2 = zone_index(20.0, 15.0, L, W)
     assert p1 == p2
+
+
+def test_zone_entropy_fixed_and_uniform():
+    fixed = np.zeros(N_ZONES); fixed[5] = 1.0
+    assert zone_entropy(fixed) == pytest.approx(0.0)
+    four = np.zeros(N_ZONES); four[:4] = 0.25
+    assert zone_entropy(four) == pytest.approx(np.log(4) / np.log(N_ZONES))
+
+
+def test_with_phase_drops_loose_ball_and_labels():
+    frame = pd.DataFrame({
+        "player_id": [1, 1, 1],
+        "is_home": [True, True, True],
+        "possession": ["home team", "away team", None],
+    })
+    out = with_phase(frame)
+    assert list(out["phase"]) == ["in", "out"]  # None row dropped
+
+
+def _feature_frame():
+    # player 1 (home) sits in one zone for 3 in-possession frames;
+    # player 2 (home) has only 1 in-possession frame (below min_frames=2).
+    return pd.DataFrame({
+        "player_id": [1, 1, 1, 2],
+        "team_id": [10, 10, 10, 10],
+        "is_home": [True, True, True, True],
+        "interval": [0, 0, 0, 0],
+        "depth": [20.0, 20.0, 20.0, -30.0],
+        "lateral": [10.0, 10.0, 10.0, 0.0],
+        "possession": ["home team", "home team", "home team", "home team"],
+    })
+
+
+def test_player_interval_features_occupancy_and_drop():
+    out = player_interval_features(_feature_frame(), 105.0, 68.0, min_frames=2)
+    # player 2 has 1 frame < min_frames -> dropped
+    assert set(out["player_id"]) == {1}
+    row = out.iloc[0]
+    assert row["n_frames"] == 3
+    assert row["phase"] == "in"
+    # occupancy sums to 1 and is concentrated in a single zone
+    zcols = [c for c in out.columns if c.startswith("z_b")]
+    assert len(zcols) == N_ZONES
+    assert row[zcols].sum() == pytest.approx(1.0)
+    assert row[zcols].max() == pytest.approx(1.0)
+    assert row["std_depth"] == pytest.approx(0.0)
+    assert row["ellipse_area"] == pytest.approx(0.0)
+    assert row["zone_entropy"] == pytest.approx(0.0)
+
+
+def test_player_interval_features_no_rows_when_all_loose_ball():
+    frame = _feature_frame().assign(possession=None)
+    out = player_interval_features(frame, 105.0, 68.0, min_frames=1)
+    assert out.empty

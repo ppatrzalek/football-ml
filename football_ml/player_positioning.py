@@ -52,3 +52,97 @@ def zone_index(
     if band.ndim == 0:
         return int(band), int(lane), int(zone)
     return band, lane, zone
+
+
+def zone_entropy(fracs) -> float:
+    """Normalized Shannon entropy of an occupancy vector (0 = fixed, 1 = uniform)."""
+    p = np.asarray(fracs, dtype=float)
+    p = p[p > 0]
+    if p.size <= 1:
+        return 0.0
+    return float(-(p * np.log(p)).sum() / np.log(len(fracs)))
+
+
+def with_phase(frame: pd.DataFrame) -> pd.DataFrame:
+    """Add a ``phase`` column (``in``/``out``), dropping loose-ball rows.
+
+    A row is ``in`` possession when the ball belongs to the player's own team,
+    ``out`` when it belongs to the opponent. Rows with no possession (loose
+    ball / ``None``) are dropped so they count toward neither phase.
+    """
+    f = frame[frame["possession"].notna()].copy()
+    own = np.where(f["is_home"], "home team", "away team")
+    f["phase"] = np.where(f["possession"].to_numpy() == own, "in", "out")
+    return f
+
+
+def player_interval_features(
+    frame: pd.DataFrame,
+    pitch_length: float,
+    pitch_width: float,
+    *,
+    min_frames: int = 50,
+    n_bands: int = N_BANDS,
+    n_lanes: int = N_LANES,
+) -> pd.DataFrame:
+    """Compute per-(player, interval, phase) zone occupancy and spread features.
+
+    Parameters
+    ----------
+    frame : pd.DataFrame
+        Tidy outfielder frame from :func:`build_outfielder_frame`.
+    pitch_length, pitch_width : float
+        Pitch dimensions in meters (for zone binning).
+    min_frames : int
+        Rows with fewer valid frames than this are dropped.
+    n_bands, n_lanes : int
+        Zone grid resolution.
+
+    Returns
+    -------
+    pd.DataFrame
+        Keys ``player_id, team_id, is_home, interval, phase``; scalars
+        ``n_frames, mean_depth, mean_lateral, std_depth, std_lateral,
+        ellipse_area, zone_entropy``; and ``n_bands*n_lanes`` occupancy columns
+        ``z_b{b}_l{l}`` summing to 1 per row.
+    """
+    n_zones = n_bands * n_lanes
+    zcols = [f"z_b{b}_l{l}" for b in range(n_bands) for l in range(n_lanes)]
+    f = with_phase(frame)
+    rows = []
+    for (player_id, interval, phase), g in f.groupby(
+        ["player_id", "interval", "phase"], sort=False
+    ):
+        n = len(g)
+        if n < min_frames:
+            continue
+        depth = g["depth"].to_numpy()
+        lateral = g["lateral"].to_numpy()
+        _, _, zone = zone_index(
+            depth, lateral, pitch_length, pitch_width,
+            n_bands=n_bands, n_lanes=n_lanes,
+        )
+        occ = np.bincount(zone, minlength=n_zones).astype(float) / n
+        std_d = float(np.std(depth))
+        std_l = float(np.std(lateral))
+        row = {
+            "player_id": player_id,
+            "team_id": g["team_id"].iloc[0],
+            "is_home": bool(g["is_home"].iloc[0]),
+            "interval": int(interval),
+            "phase": phase,
+            "n_frames": n,
+            "mean_depth": float(np.mean(depth)),
+            "mean_lateral": float(np.mean(lateral)),
+            "std_depth": std_d,
+            "std_lateral": std_l,
+            "ellipse_area": float(np.pi * std_d * std_l),
+            "zone_entropy": zone_entropy(occ),
+        }
+        row.update(dict(zip(zcols, occ)))
+        rows.append(row)
+    return pd.DataFrame(rows, columns=[
+        "player_id", "team_id", "is_home", "interval", "phase", "n_frames",
+        "mean_depth", "mean_lateral", "std_depth", "std_lateral",
+        "ellipse_area", "zone_entropy", *zcols,
+    ])
