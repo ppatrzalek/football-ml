@@ -231,6 +231,12 @@ def test_rollup_frame_weighted_occupancy_and_all_phase():
     assert in_row["z_b1_l1"] == pytest.approx(0.9)  # zone 5 = band1 lane1
     assert in_row["z_b1_l2"] == pytest.approx(0.1)  # zone 6 = band1 lane2
     assert in_row["n_frames"] == 100
+    # (a) rolled-up occupancy row sums to ~1.0 for the in row
+    assert np.isclose(in_row[zcols].sum(), 1.0)
+    # (b) empty input returns a typed empty frame with the correct columns
+    empty = rollup_player_features(pd.DataFrame(columns=feats.columns))
+    assert empty.empty
+    assert all(col in empty.columns for col in ["player_id", "phase", "n_frames"] + zcols)
 
 
 def test_enrich_formations_adds_named_lines_and_nulls():
