@@ -232,6 +232,70 @@ def settled_open_play_frames(
     return kept
 
 
+def build_outfielder_frame(
+    tracking: pd.DataFrame,
+    ball: pd.DataFrame,
+    roster: pd.DataFrame,
+    positions: pd.DataFrame,
+    match_row: pd.Series,
+    *,
+    interval_min: int = 5,
+) -> pd.DataFrame:
+    """Build a tidy per-(frame, outfielder) table with normalized coordinates.
+
+    Parameters
+    ----------
+    tracking, ball, roster, positions : pd.DataFrame
+        Player tracking, ball tracking, match roster, and position dimension,
+        already filtered to a single match.
+    match_row : pd.Series
+        The ``dim_match`` row for the match.
+    interval_min : int
+        Interval length in minutes for the ``interval`` bucket.
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per (frame, outfielder) with columns ``player_id, team_id,
+        is_home, period, frame, interval, player_x, player_y, depth, lateral,
+        possession``. Goalkeepers and roster-less players are dropped.
+    """
+    home_id = int(match_row["home_team.id"])
+    hts = match_row["home_team_side"]
+    p1s = int(match_row["match_period_1st_start_frame"])
+    p2s = int(match_row["match_period_2nd_start_frame"])
+
+    roster = roster.merge(
+        positions[["player_role_id", "player_role_name"]], on="player_role_id", how="left"
+    )
+    role_map = roster.set_index("player_id")["player_role_name"].to_dict()
+    team_map = roster.set_index("player_id")["team_id"].to_dict()
+
+    t = tracking.copy()
+    t["player_role_name"] = t["player_id"].map(role_map)
+    t["team_id"] = t["player_id"].map(team_map)
+    t = t[t["team_id"].notna()]
+    t = t[t["player_role_name"] != GK_ROLE_NAME]
+    t["is_home"] = t["team_id"] == home_id
+    signs = [attack_sign(h, p, hts) for h, p in zip(t["is_home"], t["period"])]
+    t["depth"] = [s * x for s, x in zip(signs, t["player_x"])]
+    t["lateral"] = [s * y for s, y in zip(signs, t["player_y"])]
+    t["interval"] = [
+        interval_key(f, p, p1s, p2s, interval_min)
+        for f, p in zip(t["frame"], t["period"])
+    ]
+
+    bframes = _ball_frames(ball, p1s, p2s)
+    poss = pd.Series(ball["possession_team_group"].to_numpy(), index=bframes)
+    poss = poss[~poss.index.duplicated()]
+    t["possession"] = t["frame"].map(poss)
+
+    return t[[
+        "player_id", "team_id", "is_home", "period", "frame", "interval",
+        "player_x", "player_y", "depth", "lateral", "possession",
+    ]].reset_index(drop=True)
+
+
 def extract_match_formations(
     tracking: pd.DataFrame,
     ball: pd.DataFrame,
@@ -251,40 +315,11 @@ def extract_match_formations(
     """
     home_id = int(match_row["home_team.id"])
     away_id = int(match_row["away_team.id"])
-    hts = match_row["home_team_side"]
     p1s = int(match_row["match_period_1st_start_frame"])
     p2s = int(match_row["match_period_2nd_start_frame"])
-
-    roster = roster.merge(
-        positions[["player_role_id", "player_role_name"]], on="player_role_id", how="left"
+    t = build_outfielder_frame(
+        tracking, ball, roster, positions, match_row, interval_min=interval_min
     )
-    roster_by_player = roster.set_index("player_id")
-    role_map = roster_by_player["player_role_name"].to_dict()
-    team_map = roster_by_player["team_id"].to_dict()
-
-    t = tracking.copy()
-    t["player_role_name"] = t["player_id"].map(role_map)
-    t["team_id"] = t["player_id"].map(team_map)
-    # Drop tracking players missing from the roster: an unmatched player_id maps
-    # to team_id NaN, which is not the GK and would otherwise default to the
-    # away bucket below (NaN == home_id is False), silently corrupting that
-    # frame's player count.
-    t = t[t["team_id"].notna()]
-    t = t[t["player_role_name"] != GK_ROLE_NAME]
-    t["is_home"] = t["team_id"] == home_id
-    t["depth"] = [
-        attack_sign(h, p, hts) * x
-        for h, p, x in zip(t["is_home"], t["period"], t["player_x"])
-    ]
-    t["interval"] = [
-        interval_key(f, p, p1s, p2s, interval_min)
-        for f, p in zip(t["frame"], t["period"])
-    ]
-
-    bframes = _ball_frames(ball, p1s, p2s)
-    poss = pd.Series(ball["possession_team_group"].to_numpy(), index=bframes)
-    poss = poss[~poss.index.duplicated()]
-    t["possession"] = t["frame"].map(poss)
 
     # Keep only settled open-play frames (drops restarts, aerial deliveries,
     # dead/loose ball, and a resettle buffer) so formation reflects real shape.
