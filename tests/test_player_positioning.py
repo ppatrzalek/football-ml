@@ -267,3 +267,32 @@ def test_write_player_positioning_roundtrip(tmp_path):
     assert p1.exists() and p2.exists()
     assert pd.read_parquet(p1).shape[0] == 1
     assert pd.read_parquet(p2).iloc[0]["phase"] == "all"
+
+
+@pytest.mark.skipif(
+    not (Path("data/raw/fct_players_tracking.parquet").exists()),
+    reason="raw match parquet not available",
+)
+def test_end_to_end_smoke_1886347():
+    from football_ml.jobs import player_positioning_job
+    out = player_positioning_job.run("1886347")
+    interval = pd.read_parquet(out["interval"])
+    assert not interval.empty
+    zcols = [c for c in interval.columns if c.startswith("z_b")]
+    assert len(zcols) == 32
+    # every occupancy row sums to ~1
+    assert np.allclose(interval[zcols].sum(axis=1).to_numpy(), 1.0, atol=1e-6)
+    # names resolved
+    assert interval["player_name"].notna().any()
+    import json
+    result = json.loads(Path(out["json"]).read_text())
+    # at least one cell has player-annotated lines summing to its formation digits
+    found = False
+    for cell in result["intervals"].values():
+        for team in ("home", "away"):
+            mode = cell[team].get("in_possession")
+            lines = cell[team].get("in_possession_lines")
+            if mode and lines:
+                assert sum(ln["size"] for ln in lines) == sum(int(d) for d in mode.split("-"))
+                found = True
+    assert found
