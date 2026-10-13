@@ -123,7 +123,13 @@ def _make_tracking(frames, team_players, period=1.0):
     for frame in frames:
         for player_id, x in team_players:
             rows.append(
-                {"player_id": player_id, "player_x": x, "period": period, "frame": frame}
+                {
+                    "player_id": player_id,
+                    "player_x": x,
+                    "player_y": 0.0,
+                    "period": period,
+                    "frame": frame,
+                }
             )
     return pd.DataFrame(rows)
 
